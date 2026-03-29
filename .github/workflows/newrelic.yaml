@@ -1,0 +1,425 @@
+name: Reusable Terraform Workflow
+
+on:
+  workflow_call:
+    inputs:
+      provider:
+        description: "Provider name (aws/newrelic)"
+        type: string
+        required: true
+      environment:
+        description: "Environment name i.e; DEV-SG, SIT-SG, UAT-JP, PROD-SG, PROD-ID, PROD-DE"
+        type: string
+        required: true
+      runs_on:
+        description: "Overrides job runs-on setting (json-encoded list)"
+        type: string
+        required: false
+        default: '["ubuntu-24.04"]'
+      working_directory:
+        description: "Working directory"
+        type: string
+        required: true
+      terraform_version:
+        description: "Terraform version"
+        type: string
+        required: false
+        default: '1.9.4'
+      tflint_version:
+        description: "TFLint version"
+        type: string
+        required: false
+        default: 'v0.60.0'
+      sops_version:
+        description: "SOPS version"
+        type: string
+        required: false
+        default: '3.7.3'
+      runner_instance_type:
+        description: "EC2 Instance Type for the github runner (only AWS)"
+        type: string
+        required: false
+        default: 't3.small'
+      runner_ami:
+        description: "EC2 Instance AMI ID for github runner (only AWS)"
+        type: string
+        required: false
+      aws_region:
+        description: "AWS Region"
+        type: string
+        required: false
+      aws_role_session_name:
+        description: "AWS OIDC Role Session Name"
+        type: string
+        required: false
+        default: "GithubActions_via_FederatedOIDC"
+      subnet_id:
+        description: "Subnet ID (only AWS)"
+        type: string
+        required: false
+      security_group_id:
+        description: "Security group id (only AWS)"
+        type: string
+        required: false
+      plan_approvers:
+        description: "Github group for terraform plan approvals"
+        type: string
+        required: false
+        default: "team-devops"
+      terraform_plugin_cache_directory:
+        description: "Cache directory for terraform plugins"
+        type: string
+        required: false
+        default: "/var/cache/.terraform.d/plugin-cache"
+    secrets:
+      GITHUB_PAT_TOKEN:
+        description: "Github PAT Token to download modules from PriveDevOpsIacModule repo"
+        required: true
+      AWS_ASSUME_ROLE_ARN:
+        description: "Assume Role ARN with access to AWS resources"
+        required: false
+      PLAN_ENCRYPT:
+        description: "Passphrase to encrypt terraform plan"
+        required: false          # changed to false so New Relic works
+      NEW_RELIC_API_KEY:
+        description: "New Relic API Key for the New Relic Terraform provider"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_VERSION: ${{ inputs.terraform_version }}
+  TFLINT_VERSION: ${{ inputs.tflint_version }}
+  SOPS_VERSION: ${{ inputs.sops_version }}
+  AWS_REGION: ${{ inputs.aws_region }}
+  AWS_DEFAULT_REGION: ${{ inputs.aws_region }}
+  RUNNER_SIZE: ${{ inputs.runner_instance_type }}
+  RUNNER_AMI: ${{ inputs.runner_ami }}
+  SUBNET_ID: ${{ inputs.subnet_id }}
+  SECURITY_GROUP_ID: ${{ inputs.security_group_id }}
+  AWS_ASSUME_ROLE_ARN: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
+  ROLE_SESSION_NAME: ${{ inputs.aws_role_session_name }}
+  ADMIN_APPROVERS: ${{ inputs.plan_approvers }}
+  TF_PLUGIN_CACHE_DIR: ${{ inputs.terraform_plugin_cache_directory }}
+  TEMP_DIR_NAME: "tmp"
+
+jobs:
+  start-runner:
+    if: ${{ inputs.provider == 'aws' }}
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+      ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
+    steps:
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ASSUME_ROLE_ARN }}
+          role-session-name: ${{ env.ROLE_SESSION_NAME }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+      - name: Start ec2 runner
+        id: start-ec2-runner
+        uses: machulav/ec2-github-runner@5ae8cda66fc6f3bae4e633ad93e6e61a061376bb #v2.4.2
+        with:
+          mode: start
+          github-token: ${{ secrets.GITHUB_PAT_TOKEN }}
+          ec2-instance-type: ${{ env.RUNNER_SIZE }}
+          ec2-image-id: ${{ env.RUNNER_AMI }}
+          subnet-id: ${{ env.SUBNET_ID }}
+          security-group-id: ${{ env.SECURITY_GROUP_ID }}
+          aws-resource-tags: >
+            [
+              {
+                "Key": "Name",
+                "Value": "github-actions-runner"
+              }
+            ]
+
+  install:
+    needs: start-runner
+    runs-on: ${{ inputs.provider == 'aws' && needs.start-runner.outputs.label || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 #v6.0.1
+      - name: install unzip
+        run: sudo apt install -y unzip
+      - name: install terraform
+        run: |
+          curl https://releases.hashicorp.com/terraform/${{ env.TF_VERSION}}/terraform_${{ env.TF_VERSION }}_linux_amd64.zip -o terraform.zip
+          unzip terraform.zip
+          sudo mv terraform /usr/bin
+      - name: setup docker
+        if: ${{ inputs.environment == 'SIT-SG' }}
+        run: |
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          sudo chmod a+r /etc/apt/keyrings/docker.asc
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli
+
+      - name: sops install
+        run: |
+          curl -L https://github.com/mozilla/sops/releases/download/v${{ env.SOPS_VERSION}}/sops_${{ env.SOPS_VERSION}}_amd64.deb -o sops.deb
+          sudo dpkg -i sops.deb
+
+      - name: install aws cli
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+
+      - name: add github-token
+        run: |
+          git config --system url."https://oauth2:${{ secrets.GITHUB_PAT_TOKEN }}@github.com".insteadOf https://github.com
+
+      - name: Configure Terraform plugin cache
+        run: |
+          mkdir --parents ${{ env.TF_PLUGIN_CACHE_DIR }}
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@4cb9feea73331a35b422df102992a03a44a3bb33 #v6.2.1
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+      - name: Move TFLint
+        run: |
+          sudo mv $(which tflint) /usr/bin/tflint
+
+
+  validate:
+    needs: [start-runner, install]
+    runs-on: ${{ inputs.provider == 'aws' && needs.start-runner.outputs.label || 'ubuntu-24.04' }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 #v6.0.1
+
+      - name: Install sops + AWS CLI for New Relic
+        if: ${{ inputs.provider == 'newrelic' }}
+        run: |
+          sudo apt install -y unzip
+          curl -L https://github.com/mozilla/sops/releases/download/v${{ env.SOPS_VERSION}}/sops_${{ env.SOPS_VERSION}}_amd64.deb -o sops.deb
+          sudo dpkg -i sops.deb
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+
+      - name: configure aws credentials
+        if: ${{ inputs.provider == 'aws' }}
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ASSUME_ROLE_ARN }}
+          role-session-name: ${{ env.ROLE_SESSION_NAME }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: sops decrypt
+        run: |
+          sops --decrypt ./secrets/terraform.encryptedvars.json > ./terraform.auto.tfvars.json
+
+      - name: Cache Terraform
+        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: terraform-${{ runner.os }}-${{ inputs.environment }}-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: terraform-${{ runner.os }}-${{ inputs.environment }}-
+
+      - name: Terraform initialize
+        run: terraform init
+
+      - name: Terraform format
+        run: terraform fmt -recursive -check
+      - name: Terraform validate
+        run: terraform validate -no-color
+
+      - name: Cache terraform initialization
+        if: ${{ inputs.provider == 'aws' }}
+        run: cp -rf .terraform /var/cache
+
+      - name: Init TFLint
+        run: tflint --init -c ${{ github.workspace }}/.tflint.hcl
+
+      - name: Run TFLint
+        run: |
+          if [ "${{ inputs.provider }}" == "aws" ]; then
+            tflint -c ${{ github.workspace }}/.tflint.hcl --enable-plugin=aws
+          else
+            tflint -c ${{ github.workspace }}/.tflint.hcl
+          fi
+
+  plan:
+    needs: [validate, start-runner, install]
+    runs-on: ${{ inputs.provider == 'aws' && needs.start-runner.outputs.label || 'ubuntu-24.04' }}
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    env:
+      PLAN_FILE_NAME: ${{ inputs.environment }}-plan
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 #v6.0.1
+
+      - name: Install sops + AWS CLI for New Relic
+        if: ${{ inputs.provider == 'newrelic' }}
+        run: |
+          sudo apt install -y unzip
+          curl -L https://github.com/mozilla/sops/releases/download/v${{ env.SOPS_VERSION}}/sops_${{ env.SOPS_VERSION}}_amd64.deb -o sops.deb
+          sudo dpkg -i sops.deb
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+
+      - name: Configure AWS credentials
+        if: ${{ inputs.provider == 'aws' }}
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ASSUME_ROLE_ARN }}
+          role-session-name: ${{ env.ROLE_SESSION_NAME }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: sops decrypt
+        run: sops --decrypt ./secrets/terraform.encryptedvars.json > ./terraform.auto.tfvars.json
+
+      - name: copy .terraform folder
+        if: ${{ inputs.provider == 'aws' }}
+        run: cp -rf /var/cache/.terraform .
+
+      - name: Terraform initialize
+        if: ${{ inputs.provider == 'newrelic' }}
+        run: terraform init
+
+      - name: Terraform plan
+        run: terraform plan -out "/${{ env.TEMP_DIR_NAME }}/${{ env.PLAN_FILE_NAME }}"
+
+      # (keep all your prepare pr comment, Encrypt Plan, upload plan, comment pr steps exactly as you had them)
+
+      - name: prepare pr comment
+        if: ${{ github.event_name == 'pull_request' && github.ref != 'refs/heads/master' }}
+        run: |
+          echo '# ${{ inputs.environment }} Terraform plan' >> /${{ env.TEMP_DIR_NAME }}/comment.txt
+          echo '<details><summary>Click to expand</summary>' >> /${{ env.TEMP_DIR_NAME }}/comment.txt
+          echo -e '\n```hcl' >> /${{ env.TEMP_DIR_NAME }}/comment.txt
+          terraform show -no-color "/${{ env.TEMP_DIR_NAME }}/${{ env.PLAN_FILE_NAME }}" >> /${{ env.TEMP_DIR_NAME }}/comment.txt
+          echo '```' >> /${{ env.TEMP_DIR_NAME }}/comment.txt
+          echo '</details>' >> /${{ env.TEMP_DIR_NAME }}/comment.txt
+
+      - name: Encrypt Plan
+        if: github.ref == 'refs/heads/master'
+        env:
+          passphrase: ${{ secrets.PLAN_ENCRYPT }}
+        shell: bash
+        run: |
+          temp_file=$(mktemp)
+          printf "%s" "$passphrase" > "$temp_file"
+          gpg -c --batch --cipher-algo AES256 --passphrase-file "$temp_file" --batch -o "/${{ env.TEMP_DIR_NAME }}/${{ env.PLAN_FILE_NAME }}.encrypted" "/${{ env.TEMP_DIR_NAME }}/${{ env.PLAN_FILE_NAME }}"
+          rm -f "/${{ env.TEMP_DIR_NAME }}/${{ env.PLAN_FILE_NAME }}"
+
+      - name: upload plan
+        if: github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f #v6.0.0
+        with:
+          name: ${{ env.PLAN_FILE_NAME }}.encrypted
+          path: /${{ env.TEMP_DIR_NAME }}/${{ env.PLAN_FILE_NAME }}.encrypted
+          retention-days: 1
+
+      - name: comment pr
+        if: ${{ github.event_name == 'pull_request' && github.ref != 'refs/heads/master' }}
+        uses: thollander/actions-comment-pull-request@24bffb9b452ba05a4f3f77933840a6a841d1b32b # v3.0.1
+        with:
+          file-path: /${{ env.TEMP_DIR_NAME }}/comment.txt
+          comment-tag: terraform_plan_comment_${{ inputs.environment }}
+
+  apply:
+    needs: [plan, start-runner, install]
+    runs-on: ${{ inputs.provider == 'aws' && needs.start-runner.outputs.label || 'ubuntu-24.04' }}
+    if: ${{ github.ref == 'refs/heads/master' && ( inputs.environment == 'SIT-SG' || inputs.environment == 'DEV-SG' ) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    env:
+      PLAN_FILE_NAME: ${{ inputs.environment }}-plan
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 #v6.0.1
+
+      - name: Install sops + AWS CLI for New Relic
+        if: ${{ inputs.provider == 'newrelic' }}
+        run: |
+          sudo apt install -y unzip
+          curl -L https://github.com/mozilla/sops/releases/download/v${{ env.SOPS_VERSION}}/sops_${{ env.SOPS_VERSION}}_amd64.deb -o sops.deb
+          sudo dpkg -i sops.deb
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+
+      - name: configure aws credentials
+        if: ${{ inputs.provider == 'aws' }}
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ASSUME_ROLE_ARN }}
+          role-session-name: ${{ env.ROLE_SESSION_NAME }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: download plan
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 #v7.0.0
+        with:
+          name: ${{ env.PLAN_FILE_NAME }}.encrypted
+          path: "/${{ env.TEMP_DIR_NAME }}/"
+
+      - name: Decrypt the plan
+        env:
+          passphrase: ${{ secrets.PLAN_ENCRYPT }}
+        run: |
+          temp_file=$(mktemp)
+          printf "%s" "$passphrase" > "$temp_file"
+          gpg --passphrase-file "$temp_file" --batch -o "/${{ env.TEMP_DIR_NAME }}/${{ env.PLAN_FILE_NAME }}" -d "/${{ env.TEMP_DIR_NAME }}/${{ env.PLAN_FILE_NAME }}.encrypted"
+
+      - name: copy .terraform folder
+        if: ${{ inputs.provider == 'aws' }}
+        run: cp -rf /var/cache/.terraform .
+
+      - name: Terraform initialize
+        if: ${{ inputs.provider == 'newrelic' }}
+        run: terraform init
+
+      - name: wait for approval
+        if: ${{ inputs.environment == 'DEV-SG' }}
+        continue-on-error: true
+        uses: trstringer/manual-approval@74d99dff7380e3e4b122d4ededcbca2b6ce59367 #v1.12.0
+        with:
+          secret: ${{ secrets.GITHUB_PAT_TOKEN }}
+          approvers: ${{ env.ADMIN_APPROVERS }}
+          issue-title: "Apply IAC for ${{ github.workflow }}"
+          minimum-approvals: 1
+          exclude-workflow-initiator-as-approver: true
+
+      - name: apply
+        run: terraform apply /${{ env.TEMP_DIR_NAME }}/${{ env.PLAN_FILE_NAME }}
+
+  stop-runner:
+    if: ${{ always() && inputs.provider == 'aws' }}
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    needs: [start-runner, install, validate, plan, apply]
+    steps:
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ASSUME_ROLE_ARN }}
+          role-session-name: ${{ env.ROLE_SESSION_NAME }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+      - name: Stop EC2 runner
+        uses: machulav/ec2-github-runner@5ae8cda66fc6f3bae4e633ad93e6e61a061376bb #v2.4.2
+        with:
+          mode: stop
+          github-token: ${{ secrets.GITHUB_PAT_TOKEN }}
+          label: ${{ needs.start-runner.outputs.label }}
+          ec2-instance-id: ${{ needs.start-runner.outputs.ec2-instance-id }}
