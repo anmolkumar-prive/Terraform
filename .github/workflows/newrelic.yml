@@ -1,18 +1,21 @@
 name: New Relic Terraform Workflow
 
 on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'environments/aws/prive-sit/sit/**'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'environments/aws/prive-sit/sit/**'
   workflow_dispatch:
-    inputs:
-      environment:
-        description: "Environment name"
-        required: true
-      working_directory:
-        description: "Terraform working directory"
-        required: true
 
 jobs:
   newrelic-plan:
-    uses: ./.github/workflows/reusable-terraform.yml
+    uses: anmolkumar-prive/Terraform/.github/workflows/reusable-terraform.yml
     with:
       provider: newrelic
       environment: ${{ github.event.inputs.environment }}
