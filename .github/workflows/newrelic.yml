@@ -5,13 +5,13 @@ on:
     branches:
       - main
     paths:
-      - '**/*.tf'
+      - '**'                # Trigger on any file change
   pull_request:
     branches:
       - main
     paths:
-      - '**/*.tf'
-  workflow_dispatch:
+      - '**'                # Trigger on any file change
+  workflow_dispatch:         # Also allow manual trigger
 
 jobs:
   newrelic-plan:
@@ -19,8 +19,8 @@ jobs:
 
     with:
       provider: newrelic
-      environment: SIT-SG              # ✅ hardcoded since push/PR has no inputs
-      working_directory: .             # ✅ because main.tf is in root
+      environment: SIT-SG                 # Hardcoded for testing
+      working_directory: .                # Root folder
       terraform_version: '1.9.4'
       tflint_version: 'v0.60.0'
       sops_version: '3.7.3'
