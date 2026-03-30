@@ -3,27 +3,29 @@ name: New Relic Terraform Workflow
 on:
   push:
     branches:
-      - master
+      - main
     paths:
-      - 'environments/aws/prive-sit/sit/**'
+      - '**/*.tf'
   pull_request:
     branches:
-      - master
+      - main
     paths:
-      - 'environments/aws/prive-sit/sit/**'
+      - '**/*.tf'
   workflow_dispatch:
 
 jobs:
   newrelic-plan:
     uses: anmolkumar-prive/Terraform/.github/workflows/reusable-terraform.yml
+
     with:
       provider: newrelic
-      environment: ${{ github.event.inputs.environment }}
-      working_directory: ${{ github.event.inputs.working_directory }}
-      terraform_version: '1.9.4' # optional override
-      tflint_version: 'v0.60.0'  # optional override
-      sops_version: '3.7.3'      # optional override
-      plan_approvers: 'team-devops' # optional override
+      environment: SIT-SG              # ✅ hardcoded since push/PR has no inputs
+      working_directory: .             # ✅ because main.tf is in root
+      terraform_version: '1.9.4'
+      tflint_version: 'v0.60.0'
+      sops_version: '3.7.3'
+      plan_approvers: 'team-devops'
+
     secrets:
       GITHUB_PAT_TOKEN: ${{ secrets.GITHUB_PAT_TOKEN }}
       PLAN_ENCRYPT: ${{ secrets.PLAN_ENCRYPT }}
