@@ -12,7 +12,7 @@ on:
 
 jobs:
   newrelic-plan:
-    uses: ./.github/workflows/reusable-terraform.yml
+    uses: ./.github/workflows/reusable-terraform.yml@main
     with:
       provider: newrelic
       environment: ${{ github.event.inputs.environment }}
