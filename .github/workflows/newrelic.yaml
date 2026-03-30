@@ -302,7 +302,7 @@ jobs:
       # (keep all your prepare pr comment, Encrypt Plan, upload plan, comment pr steps exactly as you had them)
 
       - name: prepare pr comment
-        if: ${{ github.event_name == 'pull_request' && github.ref != 'refs/heads/master' }}
+        if: ${{ github.event_name == 'pull_request' && github.ref != 'refs/heads/main' }}
         run: |
           echo '# ${{ inputs.environment }} Terraform plan' >> /${{ env.TEMP_DIR_NAME }}/comment.txt
           echo '<details><summary>Click to expand</summary>' >> /${{ env.TEMP_DIR_NAME }}/comment.txt
@@ -312,7 +312,7 @@ jobs:
           echo '</details>' >> /${{ env.TEMP_DIR_NAME }}/comment.txt
 
       - name: Encrypt Plan
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/main'
         env:
           passphrase: ${{ secrets.PLAN_ENCRYPT }}
         shell: bash
@@ -323,7 +323,7 @@ jobs:
           rm -f "/${{ env.TEMP_DIR_NAME }}/${{ env.PLAN_FILE_NAME }}"
 
       - name: upload plan
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f #v6.0.0
         with:
           name: ${{ env.PLAN_FILE_NAME }}.encrypted
@@ -331,7 +331,7 @@ jobs:
           retention-days: 1
 
       - name: comment pr
-        if: ${{ github.event_name == 'pull_request' && github.ref != 'refs/heads/master' }}
+        if: ${{ github.event_name == 'pull_request' && github.ref != 'refs/heads/main' }}
         uses: thollander/actions-comment-pull-request@24bffb9b452ba05a4f3f77933840a6a841d1b32b # v3.0.1
         with:
           file-path: /${{ env.TEMP_DIR_NAME }}/comment.txt
@@ -340,7 +340,7 @@ jobs:
   apply:
     needs: [plan, start-runner, install]
     runs-on: ${{ inputs.provider == 'aws' && needs.start-runner.outputs.label || 'ubuntu-24.04' }}
-    if: ${{ github.ref == 'refs/heads/master' && ( inputs.environment == 'SIT-SG' || inputs.environment == 'DEV-SG' ) }}
+    if: ${{ github.ref == 'refs/heads/main' && ( inputs.environment == 'SIT-SG' || inputs.environment == 'DEV-SG' ) }}
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
