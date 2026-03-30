@@ -15,7 +15,7 @@ on:
 
 jobs:
   newrelic-plan:
-    uses: anmolkumar-prive/Terraform/.github/workflows/reusable-terraform.yml
+    uses: anmolkumar-prive/Terraform/.github/workflows/reusable-terraform.yml@main
 
     with:
       provider: newrelic
