@@ -72,7 +72,7 @@ on:
         required: false
         default: "/var/cache/.terraform.d/plugin-cache"
     secrets:
-      GITHUB_PAT_TOKEN:
+      PAT_TOKEN:
         description: "Github PAT Token to download modules from PriveDevOpsIacModule repo"
         required: true
       AWS_ASSUME_ROLE_ARN:
@@ -125,7 +125,7 @@ jobs:
         uses: machulav/ec2-github-runner@5ae8cda66fc6f3bae4e633ad93e6e61a061376bb #v2.4.2
         with:
           mode: start
-          github-token: ${{ secrets.GITHUB_PAT_TOKEN }}
+          github-token: ${{ secrets.PAT_TOKEN }}
           ec2-instance-type: ${{ env.RUNNER_SIZE }}
           ec2-image-id: ${{ env.RUNNER_AMI }}
           subnet-id: ${{ env.SUBNET_ID }}
@@ -174,7 +174,7 @@ jobs:
 
       - name: add github-token
         run: |
-          git config --system url."https://oauth2:${{ secrets.GITHUB_PAT_TOKEN }}@github.com".insteadOf https://github.com
+          git config --system url."https://oauth2:${{ secrets.PAT_TOKEN }}@github.com".insteadOf https://github.com
 
       - name: Configure Terraform plugin cache
         run: |
@@ -395,7 +395,7 @@ jobs:
         continue-on-error: true
         uses: trstringer/manual-approval@74d99dff7380e3e4b122d4ededcbca2b6ce59367 #v1.12.0
         with:
-          secret: ${{ secrets.GITHUB_PAT_TOKEN }}
+          secret: ${{ secrets.PAT_TOKEN }}
           approvers: ${{ env.ADMIN_APPROVERS }}
           issue-title: "Apply IAC for ${{ github.workflow }}"
           minimum-approvals: 1
@@ -420,6 +420,6 @@ jobs:
         uses: machulav/ec2-github-runner@5ae8cda66fc6f3bae4e633ad93e6e61a061376bb #v2.4.2
         with:
           mode: stop
-          github-token: ${{ secrets.GITHUB_PAT_TOKEN }}
+          github-token: ${{ secrets.PAT_TOKEN }}
           label: ${{ needs.start-runner.outputs.label }}
           ec2-instance-id: ${{ needs.start-runner.outputs.ec2-instance-id }}

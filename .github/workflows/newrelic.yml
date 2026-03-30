@@ -27,6 +27,6 @@ jobs:
       plan_approvers: 'team-devops'
 
     secrets:
-      GITHUB_PAT_TOKEN: ${{ secrets.GITHUB_PAT_TOKEN }}
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
       PLAN_ENCRYPT: ${{ secrets.PLAN_ENCRYPT }}
       NEW_RELIC_API_KEY: ${{ secrets.NEW_RELIC_API_KEY }}
